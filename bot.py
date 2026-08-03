@@ -176,7 +176,6 @@ async def on_ready():
 
 @bot.event
 async def on_member_join(member: discord.Member):
-    # 1. OTOMATİK ROL VERME (Gelen insanlara ~ Oathbound, gelen botlara ~ Minions)
     try:
         if member.bot:
             target_role_name = bot_data.get("auto_bot_role", "~ Minions")
@@ -195,7 +194,6 @@ async def on_member_join(member: discord.Member):
     except Exception as e:
         print(f"Otomatik rol verme hatası: {e}")
 
-    # 2. KARŞILAMA MESAJI VE GIF
     channel = None
     welcome_id = bot_data.get("welcome_channel_id")
     if welcome_id:
@@ -268,10 +266,10 @@ async def on_message(message: discord.Message):
 
 # --- SLASH KOMUTLARI ---
 
-# 1. OTOMATİK ROL AYARLAMA
 @bot.tree.command(name="otorol_ayarla", description="Sunucuya yeni katılan kişilere ve botlara verilecek rolleri ayarlar.")
 @app_commands.checks.has_permissions(administrator=True)
 async def set_autoroles(interaction: discord.Interaction, insan_rolu: discord.Role = None, bot_rolu: discord.Role = None):
+    await interaction.response.defer(ephemeral=True)
     msg = []
     if insan_rolu:
         bot_data["auto_user_role"] = insan_rolu.name
@@ -281,58 +279,65 @@ async def set_autoroles(interaction: discord.Interaction, insan_rolu: discord.Ro
         msg.append(f"🤖 Botlar için otorol: **{bot_rolu.name}**")
 
     if not msg:
-        return await interaction.response.send_message("Lütfen en az bir rol belirtin.", ephemeral=True)
+        return await interaction.followup.send("Lütfen en az bir rol belirtin.", ephemeral=True)
 
     save_data(bot_data)
-    await interaction.response.send_message("✅ Otomatik rol ayarları güncellendi!\n" + "\n".join(msg), ephemeral=True)
+    await interaction.followup.send("✅ Otomatik rol ayarları güncellendi!\n" + "\n".join(msg), ephemeral=True)
 
 @bot.tree.command(name="otorol_bilgisi", description="Mevcut otomatik verilecek rolleri gösterir.")
 @app_commands.checks.has_permissions(administrator=True)
 async def show_autorole_info(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
     embed = discord.Embed(title="🎭 Otomatik Rol Ayarları", color=discord.Color.green())
     embed.add_field(name="👤 Gelen Üyelere Verilecek Rol", value=bot_data.get("auto_user_role", "~ Oathbound"), inline=False)
     embed.add_field(name="🤖 Gelen Botlara Verilecek Rol", value=bot_data.get("auto_bot_role", "~ Minions"), inline=False)
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="karsilama_kanali_yap", description="Bulunulan kanalı veya seçilen kanalı Hoşgeldin/Görüşürüz kanalı yapar.")
 @app_commands.checks.has_permissions(administrator=True)
 async def set_current_as_welcome_channel(interaction: discord.Interaction, kanal: discord.TextChannel = None):
+    await interaction.response.defer(ephemeral=True)
     target_channel = kanal or interaction.channel
     bot_data["welcome_channel_id"] = target_channel.id
     save_data(bot_data)
-    await interaction.response.send_message(f"✅ Hoşgeldin & Görüşürüz kanalı {target_channel.mention} olarak ayarlandı!", ephemeral=True)
+    await interaction.followup.send(f"✅ Hoşgeldin & Görüşürüz kanalı {target_channel.mention} olarak ayarlandı!", ephemeral=True)
 
 @bot.tree.command(name="karsilama_mesaji_ayarla", description="Giriş yapıldığında atılacak metni değiştirir ({user} etiketi destekler).")
 @app_commands.checks.has_permissions(administrator=True)
 async def set_welcome_message(interaction: discord.Interaction, mesaj: str):
+    await interaction.response.defer(ephemeral=True)
     bot_data["welcome_message"] = mesaj
     save_data(bot_data)
-    await interaction.response.send_message(f"✅ Karşılama mesajı güncellendi!\n**Yeni Mesaj:** {mesaj}", ephemeral=True)
+    await interaction.followup.send(f"✅ Karşılama mesajı güncellendi!\n**Yeni Mesaj:** {mesaj}", ephemeral=True)
 
 @bot.tree.command(name="karsilama_gif_ayarla", description="Giriş yapıldığında gönderilecek GIF linkini değiştirir.")
 @app_commands.checks.has_permissions(administrator=True)
 async def set_welcome_gif(interaction: discord.Interaction, gif_url: str):
+    await interaction.response.defer(ephemeral=True)
     bot_data["welcome_gif"] = gif_url
     save_data(bot_data)
-    await interaction.response.send_message(f"✅ Karşılama GIF linki güncellendi!\n**GIF:** {gif_url}", ephemeral=True)
+    await interaction.followup.send(f"✅ Karşılama GIF linki güncellendi!\n**GIF:** {gif_url}", ephemeral=True)
 
 @bot.tree.command(name="ugurlama_mesaji_ayarla", description="Biri ayrıldığında atılacak metni değiştirir ({user} etiketi destekler).")
 @app_commands.checks.has_permissions(administrator=True)
 async def set_leave_message(interaction: discord.Interaction, mesaj: str):
+    await interaction.response.defer(ephemeral=True)
     bot_data["leave_message"] = mesaj
     save_data(bot_data)
-    await interaction.response.send_message(f"✅ Uğurlama mesajı güncellendi!\n**Yeni Mesaj:** {mesaj}", ephemeral=True)
+    await interaction.followup.send(f"✅ Uğurlama mesajı güncellendi!\n**Yeni Mesaj:** {mesaj}", ephemeral=True)
 
 @bot.tree.command(name="ugurlama_gif_ayarla", description="Biri ayrıldığında gönderilecek GIF linkini değiştirir.")
 @app_commands.checks.has_permissions(administrator=True)
 async def set_leave_gif(interaction: discord.Interaction, gif_url: str):
+    await interaction.response.defer(ephemeral=True)
     bot_data["leave_gif"] = gif_url
     save_data(bot_data)
-    await interaction.response.send_message(f"✅ Uğurlama GIF linki güncellendi!\n**GIF:** {gif_url}", ephemeral=True)
+    await interaction.followup.send(f"✅ Uğurlama GIF linki güncellendi!\n**GIF:** {gif_url}", ephemeral=True)
 
 @bot.tree.command(name="karsilama_bilgisi", description="Mevcut karşılama ve uğurlama ayarlarını gösterir.")
 @app_commands.checks.has_permissions(administrator=True)
 async def show_welcome_info(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
     w_id = bot_data.get("welcome_channel_id")
     channel_str = f"<#{w_id}>" if w_id else "Varsayılan (giriş-çıkış / welcome / genel)"
     
@@ -343,7 +348,7 @@ async def show_welcome_info(interaction: discord.Interaction):
     embed.add_field(name="🚪 Uğurlama Mesajı", value=bot_data.get("leave_message"), inline=False)
     embed.add_field(name="🖼️ Uğurlama GIF", value=bot_data.get("leave_gif") or "Yok", inline=False)
     
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="otocevap_ekle", description="Bota yeni bir otomatik cevap/GIF yanıtı ekler.")
 @app_commands.checks.has_permissions(administrator=True)
@@ -353,6 +358,7 @@ async def show_welcome_info(interaction: discord.Interaction):
     wildcard="True ise cümlenin herhangi bir yerinde geçmesi yeterlidir"
 )
 async def add_custom_response(interaction: discord.Interaction, tetikleyici: str, yanit: str, wildcard: bool = False):
+    await interaction.response.defer(ephemeral=True)
     key = tetikleyici.strip().lower()
     customs = bot_data.setdefault("custom_responses", {})
     
@@ -367,7 +373,7 @@ async def add_custom_response(interaction: discord.Interaction, tetikleyici: str
         }
     
     save_data(bot_data)
-    await interaction.response.send_message(
+    await interaction.followup.send(
         f"✅ **'{key}'** için yeni yanıt eklendi!\n💬 **Eklendi:** {yanit}\n🔍 **Wildcard:** {wildcard}",
         ephemeral=True
     )
@@ -375,19 +381,21 @@ async def add_custom_response(interaction: discord.Interaction, tetikleyici: str
 @bot.tree.command(name="otocevap_sil", description="Eklenmiş bir otomatik cevabı siler.")
 @app_commands.checks.has_permissions(administrator=True)
 async def remove_custom_response(interaction: discord.Interaction, tetikleyici: str):
+    await interaction.response.defer(ephemeral=True)
     key = tetikleyici.strip().lower()
     customs = bot_data.get("custom_responses", {})
     
     if key in customs:
         del customs[key]
         save_data(bot_data)
-        await interaction.response.send_message(f"✅ **'{key}'** oto cevabı başarıyla silindi.", ephemeral=True)
+        await interaction.followup.send(f"✅ **'{key}'** oto cevabı başarıyla silindi.", ephemeral=True)
     else:
-        await interaction.response.send_message(f"❌ **'{key}'** adında eklenmiş özel bir oto cevap bulunamadı.", ephemeral=True)
+        await interaction.followup.send(f"❌ **'{key}'** adında eklenmiş özel bir oto cevap bulunamadı.", ephemeral=True)
 
 @bot.tree.command(name="otocevap_listele", description="Tüm özel ve varsayılan oto cevapları listeler.")
 @app_commands.checks.has_permissions(administrator=True)
 async def list_custom_responses(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
     merged = dict(config.AUTO_RESPONSES)
     merged.update(bot_data.get("custom_responses", {}))
 
@@ -402,7 +410,7 @@ async def list_custom_responses(interaction: discord.Interaction):
         description="\n".join(text_list) if text_list else "Oto cevap bulunamadı.",
         color=discord.Color.gold()
     )
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="ozel_rol_menusu", description="Kendi belirleyeceğiniz rollerle kanala tıklamalı rol menüsü atar.")
 @app_commands.checks.has_permissions(administrator=True)
@@ -436,12 +444,14 @@ async def create_custom_role_menu(interaction: discord.Interaction, baslik: str,
 @bot.tree.command(name="rol_olustur", description="Sunucuda yeni bir rol oluşturur.")
 @app_commands.checks.has_permissions(administrator=True)
 async def create_single_role(interaction: discord.Interaction, rol_adi: str):
+    await interaction.response.defer(ephemeral=True)
     role = await interaction.guild.create_role(name=rol_adi, reason="Vassal of Tiamat komutu ile oluşturuldu.")
-    await interaction.response.send_message(f"✅ **{role.name}** rolü başarıyla oluşturuldu!", ephemeral=True)
+    await interaction.followup.send(f"✅ **{role.name}** rolü başarıyla oluşturuldu!", ephemeral=True)
 
 @bot.tree.command(name="rol_menusu", description="Sunucunuzdaki mevcut rol isimleriyle birebir uyumlu menüleri kanala gönderir.")
 @app_commands.checks.has_permissions(administrator=True)
 async def send_role_menus(interaction: discord.Interaction, tur: str):
+    await interaction.response.defer(ephemeral=True)
     tur = tur.lower()
     
     if tur in ["ilgi", "ilgi alanları", "kitap"]:
@@ -461,7 +471,7 @@ async def send_role_menus(interaction: discord.Interaction, tur: str):
             color=discord.Color.blue()
         )
         await interaction.channel.send(embed=embed, view=view)
-        await interaction.response.send_message("İlgi alanı rol menüsü gönderildi!", ephemeral=True)
+        await interaction.followup.send("✅ İlgi alanı rol menüsü gönderildi!", ephemeral=True)
 
     elif tur in ["renk", "renkler"]:
         options = [
@@ -483,7 +493,7 @@ async def send_role_menus(interaction: discord.Interaction, tur: str):
             color=discord.Color.purple()
         )
         await interaction.channel.send(embed=embed, view=view)
-        await interaction.response.send_message("Renk rol menüsü gönderildi!", ephemeral=True)
+        await interaction.followup.send("✅ Renk rol menüsü gönderildi!", ephemeral=True)
 
     elif tur in ["muzik", "müzik"]:
         options = [
@@ -525,18 +535,19 @@ async def send_role_menus(interaction: discord.Interaction, tur: str):
             color=discord.Color.dark_red()
         )
         await interaction.channel.send(embed=embed, view=view)
-        await interaction.response.send_message("Müzik rol menüsü gönderildi!", ephemeral=True)
+        await interaction.followup.send("✅ Müzik rol menüsü gönderildi!", ephemeral=True)
     else:
-        await interaction.response.send_message("Geçersiz tür. Kullanılabilir türler: `ilgi`, `renk`, `muzik`", ephemeral=True)
+        await interaction.followup.send("Geçersiz tür. Kullanılabilir türler: `ilgi`, `renk`, `muzik`", ephemeral=True)
 
 @bot.tree.command(name="durum_ayarla", description="Botun oynuyor/izliyor durum metnini değiştirir.")
 @app_commands.checks.has_permissions(administrator=True)
 async def set_bot_status(interaction: discord.Interaction, durum: str):
+    await interaction.response.defer(ephemeral=True)
     bot_data["bot_status"] = durum
     save_data(bot_data)
     activity = discord.Activity(type=discord.ActivityType.watching, name=durum)
     await bot.change_presence(status=discord.Status.online, activity=activity)
-    await interaction.response.send_message(f"✅ Bot durumu **'{durum}'** olarak güncellendi!", ephemeral=True)
+    await interaction.followup.send(f"✅ Bot durumu **'{durum}'** olarak güncellendi!", ephemeral=True)
 
 if __name__ == "__main__":
     if not TOKEN:
