@@ -84,6 +84,21 @@ class VassalBot(commands.Bot):
 
 bot = VassalBot()
 
+def get_welcome_channel(guild: discord.Guild):
+    welcome_id = bot_data.get("welcome_channel_id")
+    if welcome_id:
+        channel = guild.get_channel(welcome_id)
+        if channel:
+            return channel
+            
+    # Heavenly Court sunucusundaki #avlu kanalı önceliklidir
+    return discord.utils.get(guild.text_channels, name="avlu") or \
+           discord.utils.get(guild.text_channels, name="giriş-çıkış") or \
+           discord.utils.get(guild.text_channels, name="hoşgeldin") or \
+           discord.utils.get(guild.text_channels, name="welcome") or \
+           discord.utils.get(guild.text_channels, name="genel") or \
+           guild.system_channel
+
 # --- TDK KELİME KONTROLÜ ---
 
 async def is_valid_tdk_word(word: str) -> bool:
@@ -250,17 +265,7 @@ async def on_member_join(member: discord.Member):
     except Exception as e:
         print(f"Otomatik rol verme hatası: {e}")
 
-    channel = None
-    welcome_id = bot_data.get("welcome_channel_id")
-    if welcome_id:
-        channel = member.guild.get_channel(welcome_id)
-    
-    if not channel:
-        channel = discord.utils.get(member.guild.text_channels, name="giriş-çıkış") or \
-                  discord.utils.get(member.guild.text_channels, name="welcome") or \
-                  discord.utils.get(member.guild.text_channels, name="genel") or \
-                  member.guild.system_channel
-
+    channel = get_welcome_channel(member.guild)
     if channel:
         msg_template = bot_data.get("welcome_message", config.WELCOME_MESSAGE)
         gif_link = bot_data.get("welcome_gif", "")
@@ -271,17 +276,7 @@ async def on_member_join(member: discord.Member):
 
 @bot.event
 async def on_member_remove(member: discord.Member):
-    channel = None
-    welcome_id = bot_data.get("welcome_channel_id")
-    if welcome_id:
-        channel = member.guild.get_channel(welcome_id)
-        
-    if not channel:
-        channel = discord.utils.get(member.guild.text_channels, name="giriş-çıkış") or \
-                  discord.utils.get(member.guild.text_channels, name="welcome") or \
-                  discord.utils.get(member.guild.text_channels, name="genel") or \
-                  member.guild.system_channel
-
+    channel = get_welcome_channel(member.guild)
     if channel:
         msg_template = bot_data.get("leave_message", config.LEAVE_MESSAGE)
         gif_link = bot_data.get("leave_gif", "")
@@ -305,7 +300,6 @@ async def on_message(message: discord.Message):
             last_user_id = bot_data.get("word_game_last_user_id")
             used_words = bot_data.get("word_game_used_words", [])
 
-            # KURAL: Aynı kişi üst üste yazamaz!
             if last_user_id == message.author.id:
                 await message.add_reaction("⚠️")
                 await message.channel.send(
@@ -314,7 +308,6 @@ async def on_message(message: discord.Message):
                 )
                 return
 
-            # Harf kontrolü
             required_start_char = last_word[-1] if last_word else None
             if required_start_char and not word.startswith(required_start_char):
                 await message.add_reaction("❌")
@@ -324,7 +317,6 @@ async def on_message(message: discord.Message):
                 )
                 return
 
-            # Kullanıldı mı?
             if word in used_words:
                 await message.add_reaction("⚠️")
                 await message.channel.send(
@@ -333,7 +325,6 @@ async def on_message(message: discord.Message):
                 )
                 return
 
-            # TDK Kontrolü
             is_valid = await is_valid_tdk_word(word)
             if not is_valid:
                 await message.add_reaction("❓")
@@ -343,7 +334,6 @@ async def on_message(message: discord.Message):
                 )
                 return
 
-            # Başarılı Hamle
             base_points = len(word)
             ends_with_g = word.endswith("ğ")
             total_points = base_points + 10 if ends_with_g else base_points
@@ -355,7 +345,6 @@ async def on_message(message: discord.Message):
             used_words.append(word)
 
             if ends_with_g:
-                # TUR BİTTİ (Ğ ile bitti)
                 await message.add_reaction("🏆")
                 new_start_word = random.choice(INITIAL_WORDS)
                 bot_data["word_game_last_word"] = new_start_word
@@ -392,7 +381,6 @@ async def on_message(message: discord.Message):
             current_expected = bot_data.get("count_game_current", 1)
             last_user_id = bot_data.get("count_game_last_user_id")
 
-            # KURAL: Aynı kişi üst üste sayamaz!
             if last_user_id == message.author.id:
                 await message.add_reaction("⚠️")
                 await message.channel.send(
@@ -401,30 +389,25 @@ async def on_message(message: discord.Message):
                 )
                 return
 
-            # DOĞRU SAYI
             if num == current_expected:
                 await message.add_reaction("✅")
                 bot_data["count_game_current"] = current_expected + 1
                 bot_data["count_game_last_user_id"] = message.author.id
 
-                # Rekor güncelle
                 high_score = bot_data.get("count_game_high_score", 0)
                 if current_expected > high_score:
                     bot_data["count_game_high_score"] = current_expected
 
-                # Kullanıcı skoru
                 user_counts = bot_data.setdefault("count_game_user_counts", {})
                 user_id_str = str(message.author.id)
                 user_counts[user_id_str] = user_counts.get(user_id_str, 0) + 1
 
                 save_data(bot_data)
 
-                # Her 50 sayıda bir kutlama mesajı
                 if current_expected % 50 == 0:
                     await message.channel.send(f"🎉 **HARİKA İLERLEME!** Sunucu **{current_expected}** sayısına ulaştı! 🚀")
                 return
 
-            # YANLIŞ SAYI (SIFIRLANIR)
             else:
                 await message.add_reaction("💥")
                 failed_at = current_expected - 1
@@ -699,8 +682,8 @@ async def set_leave_gif(interaction: discord.Interaction, gif_url: str):
 async def show_welcome_info(interaction: discord.Interaction):
     try:
         await interaction.response.defer(ephemeral=True)
-        w_id = bot_data.get("welcome_channel_id")
-        channel_str = f"<#{w_id}>" if w_id else "Varsayılan (giriş-çıkış / welcome / genel)"
+        channel = get_welcome_channel(interaction.guild)
+        channel_str = channel.mention if channel else "Varsayılan"
         
         embed = discord.Embed(title="⚙️ Karşılama & Uğurlama Ayarları", color=discord.Color.blue())
         embed.add_field(name="📍 Aktif Kanal", value=channel_str, inline=False)
