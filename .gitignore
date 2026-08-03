@@ -1,0 +1,5 @@
+.env
+*.zip
+*.log
+__pycache__/
+bot_data.json
