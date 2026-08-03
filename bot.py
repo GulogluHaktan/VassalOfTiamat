@@ -26,10 +26,20 @@ DEFAULT_DATA = {
     "auto_user_role": "~ Oathbound",
     "auto_bot_role": "~ Minions",
     "custom_responses": {},
+    
+    # KELİME TÜRETMECE OYUNU
     "word_game_channel_id": None,
     "word_game_last_word": None,
+    "word_game_last_user_id": None,
     "word_game_used_words": [],
-    "word_game_scores": {}
+    "word_game_scores": {},
+
+    # SAYI SAYMACA OYUNU
+    "count_game_channel_id": None,
+    "count_game_current": 1,
+    "count_game_last_user_id": None,
+    "count_game_high_score": 0,
+    "count_game_user_counts": {}
 }
 
 INITIAL_WORDS = [
@@ -90,7 +100,6 @@ async def is_valid_tdk_word(word: str) -> bool:
                         return True
     except Exception as e:
         print(f"TDK API Bağlantı Hatası: {e}")
-        # TDK API yanıt vermezse Türkçe karakter kontrolü ile geçici onay
         return len(word_clean) >= 2 and word_clean.isalpha()
     return False
 
@@ -286,19 +295,27 @@ async def on_message(message: discord.Message):
     if message.author.bot:
         return
 
-    # --- KELİME TÜRETMECE OYUNU MANTIĞI ---
-    game_channel_id = bot_data.get("word_game_channel_id")
-    if game_channel_id and message.channel.id == game_channel_id:
+    # --- 1. KELİME TÜRETMECE OYUNU ---
+    word_channel_id = bot_data.get("word_game_channel_id")
+    if word_channel_id and message.channel.id == word_channel_id:
         word = message.content.strip().lower()
 
-        # Sadece tek kelime kabul et
         if len(word.split()) == 1 and word.isalpha():
             last_word = bot_data.get("word_game_last_word", "")
+            last_user_id = bot_data.get("word_game_last_user_id")
             used_words = bot_data.get("word_game_used_words", [])
 
-            # Harf kontrolü (Son kelimenin son harfi ile başlamalı)
-            required_start_char = last_word[-1] if last_word else None
+            # KURAL: Aynı kişi üst üste yazamaz!
+            if last_user_id == message.author.id:
+                await message.add_reaction("⚠️")
+                await message.channel.send(
+                    f"⚠️ {message.author.mention}, üst üste iki kelime türetemezsiniz! Başka bir üyenin yazmasını bekleyin.",
+                    delete_after=5
+                )
+                return
 
+            # Harf kontrolü
+            required_start_char = last_word[-1] if last_word else None
             if required_start_char and not word.startswith(required_start_char):
                 await message.add_reaction("❌")
                 await message.channel.send(
@@ -307,7 +324,7 @@ async def on_message(message: discord.Message):
                 )
                 return
 
-            # Daha önce kullanıldı mı?
+            # Kullanıldı mı?
             if word in used_words:
                 await message.add_reaction("⚠️")
                 await message.channel.send(
@@ -326,12 +343,11 @@ async def on_message(message: discord.Message):
                 )
                 return
 
-            # --- KELİME GEÇERLİ KABUL EDİLDİ ---
+            # Başarılı Hamle
             base_points = len(word)
             ends_with_g = word.endswith("ğ")
             total_points = base_points + 10 if ends_with_g else base_points
 
-            # Puanı kaydet
             scores = bot_data.setdefault("word_game_scores", {})
             user_id_str = str(message.author.id)
             scores[user_id_str] = scores.get(user_id_str, 0) + total_points
@@ -343,19 +359,20 @@ async def on_message(message: discord.Message):
                 await message.add_reaction("🏆")
                 new_start_word = random.choice(INITIAL_WORDS)
                 bot_data["word_game_last_word"] = new_start_word
+                bot_data["word_game_last_user_id"] = None
                 bot_data["word_game_used_words"] = [new_start_word]
                 save_data(bot_data)
 
                 await message.channel.send(
                     f"🎉 **EFSANEVİ HAMLE!** {message.author.mention} **'Ğ'** ile biten **'{word.upper()}'** kelimesini söyledi!\n"
-                    f"⭐ **+{total_points} Puan** kazandı! *(Kelime Uzunluğu: {base_points} + Ğ Bonusu: 10)*\n\n"
+                    f"⭐ **+{total_points} Puan** kazandı!\n\n"
                     f"🔄 **Tur Sıfırlandı!** Yeni Başlangıç Kelimesi: **{new_start_word.upper()}**\n"
                     f"👉 Sonraki kelime **'{new_start_word[-1].upper()}'** harfi ile başlamalı!"
                 )
             else:
-                # NORMAL HAMLE
                 await message.add_reaction("✅")
                 bot_data["word_game_last_word"] = word
+                bot_data["word_game_last_user_id"] = message.author.id
                 bot_data["word_game_used_words"] = used_words
                 save_data(bot_data)
 
@@ -364,6 +381,63 @@ async def on_message(message: discord.Message):
                     delete_after=7
                 )
             return
+
+    # --- 2. SAYI SAYMACA OYUNU ---
+    count_channel_id = bot_data.get("count_game_channel_id")
+    if count_channel_id and message.channel.id == count_channel_id:
+        content_str = message.content.strip()
+
+        if content_str.isdigit():
+            num = int(content_str)
+            current_expected = bot_data.get("count_game_current", 1)
+            last_user_id = bot_data.get("count_game_last_user_id")
+
+            # KURAL: Aynı kişi üst üste sayamaz!
+            if last_user_id == message.author.id:
+                await message.add_reaction("⚠️")
+                await message.channel.send(
+                    f"⚠️ {message.author.mention}, üst üste iki sayı sayamazsınız! Başka birinin yazmasını bekleyin. (Sıradaki sayı: **{current_expected}**)",
+                    delete_after=5
+                )
+                return
+
+            # DOĞRU SAYI
+            if num == current_expected:
+                await message.add_reaction("✅")
+                bot_data["count_game_current"] = current_expected + 1
+                bot_data["count_game_last_user_id"] = message.author.id
+
+                # Rekor güncelle
+                high_score = bot_data.get("count_game_high_score", 0)
+                if current_expected > high_score:
+                    bot_data["count_game_high_score"] = current_expected
+
+                # Kullanıcı skoru
+                user_counts = bot_data.setdefault("count_game_user_counts", {})
+                user_id_str = str(message.author.id)
+                user_counts[user_id_str] = user_counts.get(user_id_str, 0) + 1
+
+                save_data(bot_data)
+
+                # Her 50 sayıda bir kutlama mesajı
+                if current_expected % 50 == 0:
+                    await message.channel.send(f"🎉 **HARİKA İLERLEME!** Sunucu **{current_expected}** sayısına ulaştı! 🚀")
+                return
+
+            # YANLIŞ SAYI (SIFIRLANIR)
+            else:
+                await message.add_reaction("💥")
+                failed_at = current_expected - 1
+                bot_data["count_game_current"] = 1
+                bot_data["count_game_last_user_id"] = None
+                save_data(bot_data)
+
+                await message.channel.send(
+                    f"💥 {message.author.mention} yanlış sayı yazdı! (**{num}** yazıldı, **{current_expected}** bekleniyordu).\n"
+                    f"📊 Ulaşılan Rekor Sayı: **{failed_at}**\n"
+                    f"🔄 **Sayı Sıfırlandı!** Yeni sayı: **1**"
+                )
+                return
 
     # --- NORMAL OTO CEVAP MANTIĞI ---
     content_lower = message.content.strip().lower()
@@ -390,6 +464,73 @@ async def on_message(message: discord.Message):
 
     await bot.process_commands(message)
 
+# --- SAYI SAYMACA KOMUTLARI ---
+
+@bot.tree.command(name="sayi_oyunu_baslat", description="Sayı Saymaca oyununu bulunulan kanalda başlatır.")
+@app_commands.checks.has_permissions(administrator=True)
+async def start_count_game(interaction: discord.Interaction):
+    try:
+        await interaction.response.defer(ephemeral=True)
+        channel = interaction.channel
+
+        bot_data["count_game_channel_id"] = channel.id
+        bot_data["count_game_current"] = 1
+        bot_data["count_game_last_user_id"] = None
+        save_data(bot_data)
+
+        embed = discord.Embed(
+            title="🔢 Sayı Saymaca Oyunu Başladı!",
+            description=f"Bu kanal ({channel.mention}) Sayı Saymaca kanalı olarak ayarlandı.\n\n"
+                        f"📌 **Kurallar:**\n"
+                        f"• Sayılar **1**'den başlayarak sırayla yazılmalıdır (`1`, `2`, `3`...).\n"
+                        f"• ⚠️ **Aynı kişi üst üste iki sayı yazamaz!**\n"
+                        f"• Yanlış sayı yazılırsa sayaç patlar ve **1**'den yeniden başlar!\n\n"
+                        f"🚀 **Sıradaki Sayı:** **1**",
+            color=discord.Color.blue()
+        )
+        await channel.send(embed=embed)
+        await interaction.followup.send("✅ Sayı saymaca oyunu bu kanalda başlatıldı!", ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"⚠️ Hata: {e}", ephemeral=True)
+
+@bot.tree.command(name="sayi_oyunu_durdur", description="Sayı Saymaca oyununu durdurur.")
+@app_commands.checks.has_permissions(administrator=True)
+async def stop_count_game(interaction: discord.Interaction):
+    try:
+        await interaction.response.defer(ephemeral=True)
+        bot_data["count_game_channel_id"] = None
+        save_data(bot_data)
+        await interaction.followup.send("🛑 Sayı saymaca oyunu durduruldu.", ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"⚠️ Hata: {e}", ephemeral=True)
+
+@bot.tree.command(name="sayi_rekoru", description="Sayı saymaca oyununun en yüksek rekorunu ve en çok sayanları gösterir.")
+async def show_count_game_stats(interaction: discord.Interaction):
+    try:
+        await interaction.response.defer()
+        high_score = bot_data.get("count_game_high_score", 0)
+        current = bot_data.get("count_game_current", 1)
+        user_counts = bot_data.get("count_game_user_counts", {})
+
+        sorted_users = sorted(user_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+        top_text = []
+        medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+
+        for i, (user_id, count) in enumerate(sorted_users):
+            member = interaction.guild.get_member(int(user_id))
+            name = member.mention if member else f"Kullanıcı ({user_id})"
+            medal = medals[i] if i < len(medals) else "🏅"
+            top_text.append(f"{medal} {name} ➔ **{count} Sayı Saydı**")
+
+        embed = discord.Embed(title="📊 Sayı Saymaca İstatistikleri & Rekorlar", color=discord.Color.teal())
+        embed.add_field(name="🏆 Tüm Zamanların Rekoru", value=f"**{high_score}** sayısına ulaşıldı!", inline=False)
+        embed.add_field(name="🔢 Mevcut Aktif Sayı", value=f"Sıradaki sayı: **{current}**", inline=False)
+        embed.add_field(name="👥 En Çok Katkı Sağlayanlar", value="\n".join(top_text) if top_text else "Henüz kimse saymadı.", inline=False)
+
+        await interaction.followup.send(embed=embed)
+    except Exception as e:
+        await interaction.followup.send(f"⚠️ Hata: {e}", ephemeral=True)
+
 # --- KELİME OYUNU KOMUTLARI ---
 
 @bot.tree.command(name="kelime_oyunu_baslat", description="Kelime Türetmece oyununu bulunulan kanalda başlatır.")
@@ -402,6 +543,7 @@ async def start_word_game(interaction: discord.Interaction):
 
         bot_data["word_game_channel_id"] = channel.id
         bot_data["word_game_last_word"] = start_word
+        bot_data["word_game_last_user_id"] = None
         bot_data["word_game_used_words"] = [start_word]
         save_data(bot_data)
 
@@ -411,6 +553,7 @@ async def start_word_game(interaction: discord.Interaction):
                         f"📌 **Kurallar:**\n"
                         f"• TDK sözlüğünde geçen Türkçe kelimeler yazılmalıdır.\n"
                         f"• Her kelime, bir önceki kelimenin **son harfi** ile başlamalıdır.\n"
+                        f"• ⚠️ **Aynı kişi üst üste iki kelime yazamaz!**\n"
                         f"• Kelime uzunluğu kadar puan kazanırsınız.\n"
                         f"• **'Ğ'** ile biten kelime yazan **+10 Bonus Puan** kazanır ve turu bitirip yeni kelime başlatır!\n\n"
                         f"🚀 **Başlangıç Kelimesi:** **{start_word.upper()}**\n"
@@ -441,9 +584,7 @@ async def show_word_game_leaderboard(interaction: discord.Interaction):
         if not scores:
             return await interaction.followup.send("🏆 Henüz kimse kelime oyununda puan kazanmadı.")
 
-        # Puanlara göre sırala
         sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:10]
-
         leaderboard_text = []
         medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
 
@@ -685,6 +826,8 @@ async def create_single_role(interaction: discord.Interaction, rol_adi: str):
     except Exception as e:
         await interaction.followup.send(f"⚠️ Hata: {e}", ephemeral=True)
 
+# ----------------- KULLANICI OTO TAMAMLAMA (AUTOCOMPLETE / CHOICES) -----------------
+
 @bot.tree.command(name="rol_menusu", description="Sunucunuzdaki mevcut rol isimleriyle birebir uyumlu menüleri kanala gönderir.")
 @app_commands.describe(tur="Gönderilecek rol menüsü kategorisini seçin")
 @app_commands.choices(tur=[
@@ -733,7 +876,7 @@ async def send_role_menus(interaction: discord.Interaction, tur: app_commands.Ch
             embed = discord.Embed(
                 title="🎨 Renk Rol Seçimi",
                 description="Aşağıdaki menüden sevdiğiniz renk rolünü seçebilirsiniz:\n\n"
-                            "🌹 **~kirmizi** | 🍊 **~turuncu** | 🍋 **~sari** | 🌲 **~yesil** | 🧿 **~mavi** | 🌌 **~mor** | 🌷 **~Pembik**",
+                            "🌹 **~kirmizi** | 🍊 **~turuncu** | 🍋 **~sari** | 🌲 **~yesil** | 🌌 **~mor** | 🌷 **~Pembik**",
                 color=discord.Color.purple()
             )
             await interaction.channel.send(embed=embed, view=view)
