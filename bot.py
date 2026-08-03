@@ -2,6 +2,7 @@ import os
 import json
 import random
 import traceback
+import aiohttp
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -24,8 +25,17 @@ DEFAULT_DATA = {
     "bot_status": "Heavenly Court 🐉",
     "auto_user_role": "~ Oathbound",
     "auto_bot_role": "~ Minions",
-    "custom_responses": {}
+    "custom_responses": {},
+    "word_game_channel_id": None,
+    "word_game_last_word": None,
+    "word_game_used_words": [],
+    "word_game_scores": {}
 }
+
+INITIAL_WORDS = [
+    "tiamat", "ejderha", "anadolu", "efsane", "krallık", "destan", 
+    "büyü", "zindan", "kalkan", "kılıç", "zaman", "macera", "hazine"
+]
 
 def load_data():
     if os.path.exists(DATA_FILE):
@@ -63,6 +73,26 @@ class VassalBot(commands.Bot):
         print("Slash komutları senkronize edildi.")
 
 bot = VassalBot()
+
+# --- TDK KELİME KONTROLÜ ---
+
+async def is_valid_tdk_word(word: str) -> bool:
+    word_clean = word.strip().lower()
+    url = f"https://sozluk.gov.tr/gts?ara={word_clean}"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=3)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if isinstance(data, list) and len(data) > 0 and "error" not in data[0]:
+                        return True
+                    elif isinstance(data, dict) and "error" not in data:
+                        return True
+    except Exception as e:
+        print(f"TDK API Bağlantı Hatası: {e}")
+        # TDK API yanıt vermezse Türkçe karakter kontrolü ile geçici onay
+        return len(word_clean) >= 2 and word_clean.isalpha()
+    return False
 
 def get_role_by_identifier(guild: discord.Guild, identifier: str | int):
     if isinstance(identifier, int) or (isinstance(identifier, str) and identifier.isdigit()):
@@ -256,8 +286,87 @@ async def on_message(message: discord.Message):
     if message.author.bot:
         return
 
-    content_lower = message.content.strip().lower()
+    # --- KELİME TÜRETMECE OYUNU MANTIĞI ---
+    game_channel_id = bot_data.get("word_game_channel_id")
+    if game_channel_id and message.channel.id == game_channel_id:
+        word = message.content.strip().lower()
 
+        # Sadece tek kelime kabul et
+        if len(word.split()) == 1 and word.isalpha():
+            last_word = bot_data.get("word_game_last_word", "")
+            used_words = bot_data.get("word_game_used_words", [])
+
+            # Harf kontrolü (Son kelimenin son harfi ile başlamalı)
+            required_start_char = last_word[-1] if last_word else None
+
+            if required_start_char and not word.startswith(required_start_char):
+                await message.add_reaction("❌")
+                await message.channel.send(
+                    f"❌ {message.author.mention}, kelimeniz **'{required_start_char.upper()}'** harfi ile başlamalı!",
+                    delete_after=5
+                )
+                return
+
+            # Daha önce kullanıldı mı?
+            if word in used_words:
+                await message.add_reaction("⚠️")
+                await message.channel.send(
+                    f"⚠️ {message.author.mention}, **'{word.upper()}'** kelimesi bu turda zaten kullanıldı!",
+                    delete_after=5
+                )
+                return
+
+            # TDK Kontrolü
+            is_valid = await is_valid_tdk_word(word)
+            if not is_valid:
+                await message.add_reaction("❓")
+                await message.channel.send(
+                    f"❓ {message.author.mention}, **'{word.upper()}'** TDK sözlüğünde bulunamadı!",
+                    delete_after=5
+                )
+                return
+
+            # --- KELİME GEÇERLİ KABUL EDİLDİ ---
+            base_points = len(word)
+            ends_with_g = word.endswith("ğ")
+            total_points = base_points + 10 if ends_with_g else base_points
+
+            # Puanı kaydet
+            scores = bot_data.setdefault("word_game_scores", {})
+            user_id_str = str(message.author.id)
+            scores[user_id_str] = scores.get(user_id_str, 0) + total_points
+
+            used_words.append(word)
+
+            if ends_with_g:
+                # TUR BİTTİ (Ğ ile bitti)
+                await message.add_reaction("🏆")
+                new_start_word = random.choice(INITIAL_WORDS)
+                bot_data["word_game_last_word"] = new_start_word
+                bot_data["word_game_used_words"] = [new_start_word]
+                save_data(bot_data)
+
+                await message.channel.send(
+                    f"🎉 **EFSANEVİ HAMLE!** {message.author.mention} **'Ğ'** ile biten **'{word.upper()}'** kelimesini söyledi!\n"
+                    f"⭐ **+{total_points} Puan** kazandı! *(Kelime Uzunluğu: {base_points} + Ğ Bonusu: 10)*\n\n"
+                    f"🔄 **Tur Sıfırlandı!** Yeni Başlangıç Kelimesi: **{new_start_word.upper()}**\n"
+                    f"👉 Sonraki kelime **'{new_start_word[-1].upper()}'** harfi ile başlamalı!"
+                )
+            else:
+                # NORMAL HAMLE
+                await message.add_reaction("✅")
+                bot_data["word_game_last_word"] = word
+                bot_data["word_game_used_words"] = used_words
+                save_data(bot_data)
+
+                await message.channel.send(
+                    f"✅ **{word.upper()}** kabul edildi! (+{total_points} Puan) ➔ Sonraki kelime **'{word[-1].upper()}'** ile başlamalı!",
+                    delete_after=7
+                )
+            return
+
+    # --- NORMAL OTO CEVAP MANTIĞI ---
+    content_lower = message.content.strip().lower()
     merged_responses = dict(config.AUTO_RESPONSES)
     merged_responses.update(bot_data.get("custom_responses", {}))
 
@@ -281,7 +390,79 @@ async def on_message(message: discord.Message):
 
     await bot.process_commands(message)
 
-# --- SLASH KOMUTLARI ---
+# --- KELİME OYUNU KOMUTLARI ---
+
+@bot.tree.command(name="kelime_oyunu_baslat", description="Kelime Türetmece oyununu bulunulan kanalda başlatır.")
+@app_commands.checks.has_permissions(administrator=True)
+async def start_word_game(interaction: discord.Interaction):
+    try:
+        await interaction.response.defer(ephemeral=True)
+        channel = interaction.channel
+        start_word = random.choice(INITIAL_WORDS)
+
+        bot_data["word_game_channel_id"] = channel.id
+        bot_data["word_game_last_word"] = start_word
+        bot_data["word_game_used_words"] = [start_word]
+        save_data(bot_data)
+
+        embed = discord.Embed(
+            title="🎮 Kelime Türetmece Oyunu Başladı!",
+            description=f"Bu kanal ({channel.mention}) Kelime Türetmece kanalı olarak ayarlandı.\n\n"
+                        f"📌 **Kurallar:**\n"
+                        f"• TDK sözlüğünde geçen Türkçe kelimeler yazılmalıdır.\n"
+                        f"• Her kelime, bir önceki kelimenin **son harfi** ile başlamalıdır.\n"
+                        f"• Kelime uzunluğu kadar puan kazanırsınız.\n"
+                        f"• **'Ğ'** ile biten kelime yazan **+10 Bonus Puan** kazanır ve turu bitirip yeni kelime başlatır!\n\n"
+                        f"🚀 **Başlangıç Kelimesi:** **{start_word.upper()}**\n"
+                        f"👉 İlk kelimeniz **'{start_word[-1].upper()}'** harfi ile başlamalıdır!",
+            color=discord.Color.green()
+        )
+        await channel.send(embed=embed)
+        await interaction.followup.send("✅ Kelime oyunu bu kanalda başarıyla başlatıldı!", ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"⚠️ Hata: {e}", ephemeral=True)
+
+@bot.tree.command(name="kelime_oyunu_durdur", description="Kelime Türetmece oyununu durdurur.")
+@app_commands.checks.has_permissions(administrator=True)
+async def stop_word_game(interaction: discord.Interaction):
+    try:
+        await interaction.response.defer(ephemeral=True)
+        bot_data["word_game_channel_id"] = None
+        save_data(bot_data)
+        await interaction.followup.send("🛑 Kelime oyunu durduruldu.", ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"⚠️ Hata: {e}", ephemeral=True)
+
+@bot.tree.command(name="skor_tablosu", description="Kelime türetmece oyunu en yüksek puanlı oyuncuları gösterir.")
+async def show_word_game_leaderboard(interaction: discord.Interaction):
+    try:
+        await interaction.response.defer()
+        scores = bot_data.get("word_game_scores", {})
+        if not scores:
+            return await interaction.followup.send("🏆 Henüz kimse kelime oyununda puan kazanmadı.")
+
+        # Puanlara göre sırala
+        sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:10]
+
+        leaderboard_text = []
+        medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+
+        for i, (user_id, score) in enumerate(sorted_scores):
+            member = interaction.guild.get_member(int(user_id))
+            name = member.mention if member else f"Kullanıcı ({user_id})"
+            medal = medals[i] if i < len(medals) else "🏅"
+            leaderboard_text.append(f"{medal} {name} ➔ **{score} Puan**")
+
+        embed = discord.Embed(
+            title="🏆 Kelime Türetmece Liderlik Tablosu",
+            description="\n".join(leaderboard_text),
+            color=discord.Color.gold()
+        )
+        await interaction.followup.send(embed=embed)
+    except Exception as e:
+        await interaction.followup.send(f"⚠️ Hata: {e}", ephemeral=True)
+
+# --- DİĞER SLASH KOMUTLARI ---
 
 @bot.tree.command(name="otorol_ayarla", description="Sunucuya yeni katılan kişilere ve botlara verilecek rolleri ayarlar.")
 @app_commands.checks.has_permissions(administrator=True)
@@ -504,8 +685,6 @@ async def create_single_role(interaction: discord.Interaction, rol_adi: str):
     except Exception as e:
         await interaction.followup.send(f"⚠️ Hata: {e}", ephemeral=True)
 
-# ----------------- KULLANICI OTO TAMAMLAMA (AUTOCOMPLETE / CHOICES) -----------------
-
 @bot.tree.command(name="rol_menusu", description="Sunucunuzdaki mevcut rol isimleriyle birebir uyumlu menüleri kanala gönderir.")
 @app_commands.describe(tur="Gönderilecek rol menüsü kategorisini seçin")
 @app_commands.choices(tur=[
@@ -615,7 +794,7 @@ async def set_bot_status(interaction: discord.Interaction, durum: str):
         save_data(bot_data)
         activity = discord.Activity(type=discord.ActivityType.watching, name=durum)
         await bot.change_presence(status=discord.Status.online, activity=activity)
-        await interaction.followup.send(f"✅ Bot durumu **'{durum}'** mevcuttur ve güncellendi!", ephemeral=True)
+        await interaction.followup.send(f"✅ Bot durumu **'{durum}'** güncellendi!", ephemeral=True)
     except Exception as e:
         await interaction.followup.send(f"⚠️ Hata: {e}", ephemeral=True)
 
