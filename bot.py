@@ -84,20 +84,44 @@ class VassalBot(commands.Bot):
 
 bot = VassalBot()
 
+# --- AKILLI KANAL BULUCULAR (EMOJI / ÖN EK TOLERANSLI) ---
+
 def get_welcome_channel(guild: discord.Guild):
+    # 1. Kayıtlı ID varsa
     welcome_id = bot_data.get("welcome_channel_id")
     if welcome_id:
         channel = guild.get_channel(welcome_id)
         if channel:
             return channel
             
-    # Heavenly Court sunucusundaki #avlu kanalı önceliklidir
-    return discord.utils.get(guild.text_channels, name="avlu") or \
-           discord.utils.get(guild.text_channels, name="giriş-çıkış") or \
-           discord.utils.get(guild.text_channels, name="hoşgeldin") or \
-           discord.utils.get(guild.text_channels, name="welcome") or \
-           discord.utils.get(guild.text_channels, name="genel") or \
-           guild.system_channel
+    # 2. Kanal adında "avlu", "giriş", "giris", "welcome", "hoşgeldin" geçen HERHANGİ bir kanal!
+    for ch in guild.text_channels:
+        ch_name = ch.name.lower()
+        if any(k in ch_name for k in ["avlu", "giriş", "giris", "welcome", "hoşgeldin", "hosgeldin"]):
+            return ch
+
+    return guild.system_channel or (guild.text_channels[0] if guild.text_channels else None)
+
+def is_word_game_channel(channel: discord.TextChannel) -> bool:
+    # 1. Kayıtlı ID veya komut çalıştırılmış kanal mı?
+    saved_id = bot_data.get("word_game_channel_id")
+    if saved_id and channel.id == saved_id:
+        return True
+    # 2. Kanal adında "kelime" geçiyor mu?
+    if "kelime" in channel.name.lower():
+        return True
+    return False
+
+def is_count_game_channel(channel: discord.TextChannel) -> bool:
+    # 1. Kayıtlı ID veya komut çalıştırılmış kanal mı?
+    saved_id = bot_data.get("count_game_channel_id")
+    if saved_id and channel.id == saved_id:
+        return True
+    # 2. Kanal adında "sayı", "sayi", "saymaca" geçiyor mu?
+    ch_name = channel.name.lower()
+    if any(k in ch_name for k in ["sayı", "sayi", "saymaca", "counting"]):
+        return True
+    return False
 
 # --- TDK KELİME KONTROLÜ ---
 
@@ -291,15 +315,22 @@ async def on_message(message: discord.Message):
         return
 
     # --- 1. KELİME TÜRETMECE OYUNU ---
-    word_channel_id = bot_data.get("word_game_channel_id")
-    if word_channel_id and message.channel.id == word_channel_id:
+    if is_word_game_channel(message.channel):
         word = message.content.strip().lower()
+
+        # Eğer başlangıç kelimesi yoksa otomatik bir kelime ile başlat
+        if not bot_data.get("word_game_last_word"):
+            start_w = random.choice(INITIAL_WORDS)
+            bot_data["word_game_last_word"] = start_w
+            bot_data["word_game_used_words"] = [start_w]
+            save_data(bot_data)
 
         if len(word.split()) == 1 and word.isalpha():
             last_word = bot_data.get("word_game_last_word", "")
             last_user_id = bot_data.get("word_game_last_user_id")
             used_words = bot_data.get("word_game_used_words", [])
 
+            # KURAL: Aynı kişi üst üste yazamaz!
             if last_user_id == message.author.id:
                 await message.add_reaction("⚠️")
                 await message.channel.send(
@@ -308,6 +339,7 @@ async def on_message(message: discord.Message):
                 )
                 return
 
+            # Harf kontrolü
             required_start_char = last_word[-1] if last_word else None
             if required_start_char and not word.startswith(required_start_char):
                 await message.add_reaction("❌")
@@ -317,6 +349,7 @@ async def on_message(message: discord.Message):
                 )
                 return
 
+            # Kullanıldı mı?
             if word in used_words:
                 await message.add_reaction("⚠️")
                 await message.channel.send(
@@ -325,6 +358,7 @@ async def on_message(message: discord.Message):
                 )
                 return
 
+            # TDK Kontrolü
             is_valid = await is_valid_tdk_word(word)
             if not is_valid:
                 await message.add_reaction("❓")
@@ -334,6 +368,7 @@ async def on_message(message: discord.Message):
                 )
                 return
 
+            # Başarılı Hamle
             base_points = len(word)
             ends_with_g = word.endswith("ğ")
             total_points = base_points + 10 if ends_with_g else base_points
@@ -345,6 +380,7 @@ async def on_message(message: discord.Message):
             used_words.append(word)
 
             if ends_with_g:
+                # TUR BİTTİ (Ğ ile bitti)
                 await message.add_reaction("🏆")
                 new_start_word = random.choice(INITIAL_WORDS)
                 bot_data["word_game_last_word"] = new_start_word
@@ -372,8 +408,7 @@ async def on_message(message: discord.Message):
             return
 
     # --- 2. SAYI SAYMACA OYUNU ---
-    count_channel_id = bot_data.get("count_game_channel_id")
-    if count_channel_id and message.channel.id == count_channel_id:
+    if is_count_game_channel(message.channel):
         content_str = message.content.strip()
 
         if content_str.isdigit():
