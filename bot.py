@@ -499,14 +499,22 @@ async def create_single_role(interaction: discord.Interaction, rol_adi: str):
     except Exception as e:
         await interaction.followup.send(f"⚠️ Hata: {e}", ephemeral=True)
 
+# ----------------- KULLANICI OTO TAMAMLAMA (AUTOCOMPLETE / CHOICES) -----------------
+
 @bot.tree.command(name="rol_menusu", description="Sunucunuzdaki mevcut rol isimleriyle birebir uyumlu menüleri kanala gönderir.")
+@app_commands.describe(tur="Gönderilecek rol menüsü kategorisini seçin")
+@app_commands.choices(tur=[
+    app_commands.Choice(name="🎨 Renk Rolleri", value="renk"),
+    app_commands.Choice(name="🎵 Müzik Türü Rolleri", value="muzik"),
+    app_commands.Choice(name="📖 İlgi Alanı Rolleri", value="ilgi")
+])
 @app_commands.checks.has_permissions(administrator=True)
-async def send_role_menus(interaction: discord.Interaction, tur: str):
+async def send_role_menus(interaction: discord.Interaction, tur: app_commands.Choice[str]):
     try:
         await interaction.response.defer(ephemeral=True)
-        tur = tur.lower()
+        selected_type = tur.value.lower()
         
-        if tur in ["ilgi", "ilgi alanları", "kitap"]:
+        if selected_type in ["ilgi", "ilgi alanları", "kitap"]:
             options = [
                 discord.SelectOption(label="~kitap", emoji="📖", description="Kitap rolü"),
                 discord.SelectOption(label="~müzik", emoji="🎵", description="Müzik rolü"),
@@ -525,7 +533,7 @@ async def send_role_menus(interaction: discord.Interaction, tur: str):
             await interaction.channel.send(embed=embed, view=view)
             await interaction.followup.send("✅ İlgi alanı rol menüsü gönderildi!", ephemeral=True)
 
-        elif tur in ["renk", "renkler"]:
+        elif selected_type in ["renk", "renkler"]:
             options = [
                 discord.SelectOption(label="~kirmizi", emoji="🌹"),
                 discord.SelectOption(label="~turuncu", emoji="🍊"),
@@ -547,7 +555,7 @@ async def send_role_menus(interaction: discord.Interaction, tur: str):
             await interaction.channel.send(embed=embed, view=view)
             await interaction.followup.send("✅ Renk rol menüsü gönderildi!", ephemeral=True)
 
-        elif tur in ["muzik", "müzik"]:
+        elif selected_type in ["muzik", "müzik"]:
             options = [
                 discord.SelectOption(label="~Bards of the Shire", emoji="🌾", description="Folk / Celtic"),
                 discord.SelectOption(label="~Maestro of Dreams", emoji="🎻", description="Symphonic Metal"),
