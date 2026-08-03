@@ -82,7 +82,11 @@ class DynamicRoleSelect(discord.ui.Select):
                 value=str(r["value"]),
                 emoji=r.get("emoji", None)
             ))
+        if not options:
+            options.append(discord.SelectOption(label="Varsayılan Rol", value="none"))
+
         super().__init__(
+            options=options,
             placeholder="Rollerinizi seçin...",
             min_values=1,
             max_values=min(len(options), 25),
@@ -134,6 +138,7 @@ class DynamicRoleMenuView(discord.ui.View):
 class FixedRoleSelect(discord.ui.Select):
     def __init__(self, options: list, placeholder: str, custom_id: str, max_values: int = 1):
         super().__init__(
+            options=options,
             placeholder=placeholder,
             min_values=1,
             max_values=max_values,
@@ -522,7 +527,7 @@ async def send_role_menus(interaction: discord.Interaction, tur: app_commands.Ch
                 discord.SelectOption(label="~oyun", emoji="🎮", description="Oyun rolü"),
             ]
             view = discord.ui.View(timeout=None)
-            view.add_item(FixedRoleSelect(options, "İlgi alanlarınızı seçin...", "interest_exact", max_values=4))
+            view.add_item(FixedRoleSelect(options=options, placeholder="İlgi alanlarınızı seçin...", custom_id="interest_exact", max_values=4))
             
             embed = discord.Embed(
                 title="📖 İlgi Alanları Rol Seçimi",
@@ -544,7 +549,7 @@ async def send_role_menus(interaction: discord.Interaction, tur: app_commands.Ch
                 discord.SelectOption(label="~Pembik", emoji="🌷"),
             ]
             view = discord.ui.View(timeout=None)
-            view.add_item(FixedRoleSelect(options, "Renk rolünüzü seçin...", "color_exact", max_values=1))
+            view.add_item(FixedRoleSelect(options=options, placeholder="Renk rolünüzü seçin...", custom_id="color_exact", max_values=1))
 
             embed = discord.Embed(
                 title="🎨 Renk Rol Seçimi",
@@ -573,7 +578,7 @@ async def send_role_menus(interaction: discord.Interaction, tur: app_commands.Ch
                 discord.SelectOption(label="~ Echos of Mordor", emoji="⛓️", description="Atmospheric Metal"),
             ]
             view = discord.ui.View(timeout=None)
-            view.add_item(FixedRoleSelect(options, "Müzik zevkinizi seçin...", "music_exact", max_values=14))
+            view.add_item(FixedRoleSelect(options=options, placeholder="Müzik zevkinizi seçin...", custom_id="music_exact", max_values=14))
 
             embed = discord.Embed(
                 title="🎵 Müzik Türü Rol Seçimi",
@@ -610,7 +615,7 @@ async def set_bot_status(interaction: discord.Interaction, durum: str):
         save_data(bot_data)
         activity = discord.Activity(type=discord.ActivityType.watching, name=durum)
         await bot.change_presence(status=discord.Status.online, activity=activity)
-        await interaction.followup.send(f"✅ Bot durumu **'{durum}'** olarak güncellendi!", ephemeral=True)
+        await interaction.followup.send(f"✅ Bot durumu **'{durum}'** mevcuttur ve güncellendi!", ephemeral=True)
     except Exception as e:
         await interaction.followup.send(f"⚠️ Hata: {e}", ephemeral=True)
 
