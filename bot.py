@@ -2,6 +2,7 @@ import os
 import json
 import random
 import traceback
+import requests
 import aiohttp
 import discord
 from discord.ext import commands
@@ -49,7 +50,45 @@ INITIAL_WORDS = [
     "büyü", "zindan", "kalkan", "kılıç", "zaman", "macera", "hazine"
 ]
 
+# --- BULUT VERİTABANI (JSONBIN.IO) ENTEGRASYONU ---
+
+def load_from_jsonbin():
+    if not JSONBIN_API_KEY or not JSONBIN_BIN_ID:
+        return None
+    try:
+        headers = {"X-Master-Key": JSONBIN_API_KEY}
+        url = f"https://api.jsonbin.io/v3/b/{JSONBIN_BIN_ID}/latest"
+        res = requests.get(url, headers=headers, timeout=5)
+        if res.status_code == 200:
+            print("🌐 Veriler JSONBin bulut veritabanından yüklendi!")
+            return res.json().get("record", {})
+    except Exception as e:
+        print(f"JSONBin okuma hatası: {e}")
+    return None
+
+def save_to_jsonbin(data):
+    if not JSONBIN_API_KEY or not JSONBIN_BIN_ID:
+        return
+    try:
+        headers = {
+            "X-Master-Key": JSONBIN_API_KEY,
+            "Content-Type": "application/json"
+        }
+        url = f"https://api.jsonbin.io/v3/b/{JSONBIN_BIN_ID}"
+        requests.put(url, json=data, headers=headers, timeout=5)
+        print("☁️ Veriler JSONBin bulut veritabanına kaydedildi!")
+    except Exception as e:
+        print(f"JSONBin kaydetme hatası: {e}")
+
 def load_data():
+    # Önce JSONBin dene, yoksa yerel dosyadan oku
+    cloud_data = load_from_jsonbin()
+    if cloud_data:
+        for k, v in DEFAULT_DATA.items():
+            if k not in cloud_data or cloud_data[k] is None:
+                cloud_data[k] = v
+        return cloud_data
+
     if os.path.exists(DATA_FILE):
         try:
             with open(DATA_FILE, "r", encoding="utf-8") as f:
@@ -64,11 +103,15 @@ def load_data():
     return dict(DEFAULT_DATA)
 
 def save_data(data):
+    # Yerel dosyaya yaz
     try:
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=4)
     except Exception as e:
         print(f"Veri kaydetme hatası: {e}")
+
+    # JSONBin varsa buluta da gönder
+    save_to_jsonbin(data)
 
 bot_data = load_data()
 
