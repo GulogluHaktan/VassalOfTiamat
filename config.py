@@ -14,67 +14,77 @@ DEFAULT_COUNT_GAME_CHANNEL_ID = None
 AUTO_RESPONSES = {
     "ban": {
         "responses": [
-            "https://tenor.com/bWc97.gif",
-            "https://tenor.com/bQ43l.gif",
-            "https://tenor.com/bIqU0.gif"
-        ],
-        "wildcard": True
-    },
-    "günaydın": {
-        "responses": [
-            "Günaydın sunucumuzun tatlış üyesi 🩵",
-            "Günaydın!! 🌸"
+            "https://tenor.com/view/evil-grin-smirk-anime-lelouch-gif-5322378",
+            "KAİ"
         ],
         "wildcard": False
     },
+    "günaydın": {
+        "responses": [
+            "Günaydın kurban olduğum",
+            "Zahmet verdik hiç kalkamsaydın",
+            "Tarikat amcası bai'nin kutsaması üstünde olsun günaydın!",
+            "Uyandın sonunda sensiz kalmak çok zor 👉👈"
+        ],
+        "wildcard": True
+    },
     "selam": {
         "responses": [
-            "Selammm ✨",
-            "Selam hoşgeldin! 🐉"
+            "Selam şekerim~",
+            "Selam, nasılsın",
+            "Gül çehreni özlettin nasılsın",
+            "Onu bunu bırak \"evlensen ya benle\""
         ],
         "wildcard": False
     },
     "görüşürüz": {
         "responses": [
-            "Görüşürüz kendine dikkat et 👋",
-            "Bay bayyy 💖"
+            "Umarım gerçekten görüşürüz",
+            "Görüşürüz kendine iyi bak!!",
+            "Hep öyle derler..."
         ],
         "wildcard": False
     },
     "iyi geceler": {
         "responses": [
-            "İyi geceler tatlı rüyalar 🌙✨",
-            "İyi geceler! 💤"
+            "Gerçekten iyi mi geceler...",
+            "Sensiz geçen hiçbir gece iyi değil ki",
+            "İyi geceler canımın içi",
+            "Bu karanlık gökyüzünü aydınlatan çehren olduğu sürece her gecem iyi olur benim"
         ],
         "wildcard": False
     },
     "manyak": {
         "responses": [
-            "https://tenor.com/b2bJv.gif"
+            "kolay değil manyak olmak",
+            "Kolay değil rocknrollmak"
         ],
         "wildcard": False
     },
     "cüce": {
         "responses": [
-            "https://tenor.com/bC8wK.gif"
+            "Ayşegül",
+            "Hatice"
         ],
         "wildcard": False
     },
     "çınar": {
         "responses": [
-            "https://tenor.com/bW0X2.gif"
+            "Öküz"
         ],
         "wildcard": False
     },
     "bunak": {
         "responses": [
-            "https://tenor.com/bFhS8.gif"
+            "Haktan",
+            "Selim",
+            "Emre"
         ],
         "wildcard": False
     },
     "zorba": {
         "responses": [
-            "https://tenor.com/b1t9F.gif"
+            "Haktan"
         ],
         "wildcard": False
     }
