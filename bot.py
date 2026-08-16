@@ -1,6 +1,8 @@
 import os
 import json
 import random
+import time
+import asyncio
 import traceback
 import requests
 import aiohttp
@@ -18,6 +20,16 @@ JSONBIN_API_KEY = os.getenv("JSONBIN_API_KEY")
 JSONBIN_BIN_ID = os.getenv("JSONBIN_BIN_ID")
 
 DATA_FILE = "bot_data.json"
+
+# --- PAYLAŞILAN HTTP OTURUMU (her istekte yeni bağlantı açmamak için) ---
+
+http_session: aiohttp.ClientSession | None = None
+
+async def get_http_session() -> aiohttp.ClientSession:
+    global http_session
+    if http_session is None or http_session.closed:
+        http_session = aiohttp.ClientSession()
+    return http_session
 
 DEFAULT_DATA = {
     "welcome_channel_id": config.DEFAULT_WELCOME_CHANNEL_ID,
@@ -66,7 +78,7 @@ def load_from_jsonbin():
         print(f"JSONBin okuma hatası: {e}")
     return None
 
-def save_to_jsonbin(data):
+async def push_to_jsonbin(data):
     if not JSONBIN_API_KEY or not JSONBIN_BIN_ID:
         return
     try:
@@ -75,10 +87,32 @@ def save_to_jsonbin(data):
             "Content-Type": "application/json"
         }
         url = f"https://api.jsonbin.io/v3/b/{JSONBIN_BIN_ID}"
-        requests.put(url, json=data, headers=headers, timeout=5)
+        session = await get_http_session()
+        async with session.put(url, json=data, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+            await resp.read()
         print("☁️ Veriler JSONBin bulut veritabanına kaydedildi!")
     except Exception as e:
         print(f"JSONBin kaydetme hatası: {e}")
+
+# JSONBin'e her oyun hamlesinde değil, art arda gelen hamleler dindikten
+# JSONBIN_SAVE_DELAY saniye sonra tek seferde kaydeder (rate limit'e takılmamak için).
+JSONBIN_SAVE_DELAY = 5.0
+_jsonbin_save_task: asyncio.Task | None = None
+
+async def _delayed_jsonbin_push(data):
+    try:
+        await asyncio.sleep(JSONBIN_SAVE_DELAY)
+        await push_to_jsonbin(data)
+    except asyncio.CancelledError:
+        pass
+
+def save_to_jsonbin(data):
+    global _jsonbin_save_task
+    if not JSONBIN_API_KEY or not JSONBIN_BIN_ID:
+        return
+    if _jsonbin_save_task and not _jsonbin_save_task.done():
+        _jsonbin_save_task.cancel()
+    _jsonbin_save_task = asyncio.create_task(_delayed_jsonbin_push(dict(data)))
 
 def load_data():
     # Önce JSONBin dene, yoksa yerel dosyadan oku
@@ -127,6 +161,12 @@ class VassalBot(commands.Bot):
         await self.tree.sync()
         print("Slash komutları senkronize edildi.")
 
+    async def close(self):
+        global http_session
+        if http_session and not http_session.closed:
+            await http_session.close()
+        await super().close()
+
 bot = VassalBot()
 
 # --- KANAL KONTROLLERİ (KESİN ID VE AD EŞLEŞTİRME) ---
@@ -159,21 +199,46 @@ def is_count_game_channel(channel: discord.TextChannel) -> bool:
 
 # --- TDK KELİME KONTROLÜ ---
 
+# Aynı kelime tekrar sorulduğunda TDK'ya tekrar istek atmamak için önbellek,
+# ve art arda gelen isteklerin arasına minimum boşluk koyan basit bir rate limiter.
+tdk_word_cache: dict[str, bool] = {}
+_tdk_lock: asyncio.Lock | None = None
+_tdk_last_request_time = 0.0
+TDK_MIN_INTERVAL = 0.5  # gerçek TDK istekleri arasında en az bu kadar saniye bekle
+
 async def is_valid_tdk_word(word: str) -> bool:
+    global _tdk_lock, _tdk_last_request_time
     word_clean = word.strip().lower()
+
+    if word_clean in tdk_word_cache:
+        return tdk_word_cache[word_clean]
+
+    if _tdk_lock is None:
+        _tdk_lock = asyncio.Lock()
+
     url = f"https://sozluk.gov.tr/gts?ara={word_clean}"
     try:
-        async with aiohttp.ClientSession() as session:
+        async with _tdk_lock:
+            wait = TDK_MIN_INTERVAL - (time.monotonic() - _tdk_last_request_time)
+            if wait > 0:
+                await asyncio.sleep(wait)
+            _tdk_last_request_time = time.monotonic()
+
+            session = await get_http_session()
             async with session.get(url, timeout=aiohttp.ClientTimeout(total=3)) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     if isinstance(data, list) and len(data) > 0 and "error" not in data[0]:
+                        tdk_word_cache[word_clean] = True
                         return True
                     elif isinstance(data, dict) and "error" not in data:
+                        tdk_word_cache[word_clean] = True
                         return True
     except Exception as e:
         print(f"TDK API Bağlantı Hatası: {e}")
         return len(word_clean) >= 2 and word_clean.isalpha()
+
+    tdk_word_cache[word_clean] = False
     return False
 
 def get_role_by_identifier(guild: discord.Guild, identifier: str | int):
