@@ -12,7 +12,6 @@ from discord import app_commands
 from dotenv import load_dotenv
 
 import config
-from keep_alive import keep_alive
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
@@ -1027,5 +1026,4 @@ if __name__ == "__main__":
     if not TOKEN:
         print("HATA: .env dosyasında DISCORD_TOKEN bulunamadı!")
     else:
-        keep_alive()
         bot.run(TOKEN)
