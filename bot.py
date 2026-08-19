@@ -1,6 +1,8 @@
 import os
 import json
 import random
+import time
+import asyncio
 import traceback
 import requests
 import aiohttp
@@ -66,7 +68,7 @@ def load_from_jsonbin():
         print(f"JSONBin okuma hatası: {e}")
     return None
 
-def save_to_jsonbin(data):
+async def save_to_jsonbin_async(data):
     if not JSONBIN_API_KEY or not JSONBIN_BIN_ID:
         return
     try:
@@ -75,10 +77,45 @@ def save_to_jsonbin(data):
             "Content-Type": "application/json"
         }
         url = f"https://api.jsonbin.io/v3/b/{JSONBIN_BIN_ID}"
-        requests.put(url, json=data, headers=headers, timeout=5)
-        print("☁️ Veriler JSONBin bulut veritabanına kaydedildi!")
+        async with aiohttp.ClientSession() as session:
+            async with session.put(url, json=data, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                if resp.status == 200:
+                    print("☁️ Veriler JSONBin bulut veritabanına kaydedildi!")
+                else:
+                    print(f"JSONBin kaydetme hatası: HTTP {resp.status}")
     except Exception as e:
         print(f"JSONBin kaydetme hatası: {e}")
+
+# Bulut kaydını debounce'luyoruz: oyun kanallarında her mesajda tetiklenen
+# save_data(), JSONBin'e (Cloudflare arkasında) art arda istek atıp rate limit'e
+# takılmasın ve event loop'u senkron requests çağrısıyla bloklamasın diye.
+_JSONBIN_MIN_PUSH_INTERVAL = 5  # saniye
+_jsonbin_last_push = 0.0
+_jsonbin_pending_data = None
+_jsonbin_push_task_running = False
+
+async def _jsonbin_push_worker():
+    global _jsonbin_last_push, _jsonbin_pending_data, _jsonbin_push_task_running
+    try:
+        while _jsonbin_pending_data is not None:
+            wait = _JSONBIN_MIN_PUSH_INTERVAL - (time.monotonic() - _jsonbin_last_push)
+            if wait > 0:
+                await asyncio.sleep(wait)
+            data_to_push = _jsonbin_pending_data
+            _jsonbin_pending_data = None
+            await save_to_jsonbin_async(data_to_push)
+            _jsonbin_last_push = time.monotonic()
+    finally:
+        _jsonbin_push_task_running = False
+
+def save_to_jsonbin(data):
+    global _jsonbin_pending_data, _jsonbin_push_task_running
+    if not JSONBIN_API_KEY or not JSONBIN_BIN_ID:
+        return
+    _jsonbin_pending_data = data
+    if not _jsonbin_push_task_running:
+        _jsonbin_push_task_running = True
+        asyncio.create_task(_jsonbin_push_worker())
 
 def load_data():
     # Önce JSONBin dene, yoksa yerel dosyadan oku
