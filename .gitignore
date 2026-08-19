@@ -3,3 +3,4 @@
 *.log
 __pycache__/
 bot_data.json
+bot_data.db

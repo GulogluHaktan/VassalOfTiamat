@@ -42,6 +42,6 @@ Botun **HER BİR ÖZELLİĞİ** kodlarla oynamanıza gerek kalmadan, doğrudan D
 
 ## ☁️ 7/24 Ücretsiz Yayınlama (Discloud)
 1. Proje klasöründeki dosyaları (`bot.py`, `config.py`, `requirements.txt`, `.env`, `discloud.config`) zipleyin.
-2. `.env` içine `DISCORD_TOKEN` ve varsa `JSONBIN_API_KEY` / `JSONBIN_BIN_ID` değerlerini yazın.
+2. `.env` içine `DISCORD_TOKEN` değerini yazın. Veriler artık bulutta değil, uygulamanın kendi diskinde `bot_data.db` (SQLite) dosyasında saklanıyor.
 3. [discloud.app](https://discloud.app/) paneline yükleyin.
 4. Botunuz 7/24 kesintisiz çalışacaktır!

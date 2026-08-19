@@ -1,10 +1,8 @@
 import os
 import json
 import random
-import time
-import asyncio
+import sqlite3
 import traceback
-import requests
 import aiohttp
 import discord
 from discord.ext import commands
@@ -15,10 +13,9 @@ import config
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
-JSONBIN_API_KEY = os.getenv("JSONBIN_API_KEY")
-JSONBIN_BIN_ID = os.getenv("JSONBIN_BIN_ID")
 
-DATA_FILE = "bot_data.json"
+DB_FILE = "bot_data.db"
+LEGACY_DATA_FILE = "bot_data.json"
 
 DEFAULT_DATA = {
     "welcome_channel_id": config.DEFAULT_WELCOME_CHANNEL_ID,
@@ -51,103 +48,59 @@ INITIAL_WORDS = [
     "büyü", "zindan", "kalkan", "kılıç", "zaman", "macera", "hazine"
 ]
 
-# --- BULUT VERİTABANI (JSONBIN.IO) ENTEGRASYONU ---
+# --- VERİTABANI (SQLite) ---
+# Not: Discord snowflake ID'leri (kanal/kullanıcı ID'leri) 64-bit tam sayı.
+# JSONBin gibi JS/float64 tabanlı bulut depolarda bu ID'ler sessizce
+# yuvarlanıp bozuluyordu (ör. 641998623940411392 -> 641998623940411400),
+# bu da kayıtlı kanal ID'lerinin artık gerçek kanalla eşleşmemesine ve
+# oyunların "çalışmıyor" gibi görünmesine yol açıyordu. SQLite + json.dumps
+# metin olarak sakladığı için tam sayı hassasiyeti hiç bozulmuyor.
 
-def load_from_jsonbin():
-    if not JSONBIN_API_KEY or not JSONBIN_BIN_ID:
-        return None
-    try:
-        headers = {"X-Master-Key": JSONBIN_API_KEY}
-        url = f"https://api.jsonbin.io/v3/b/{JSONBIN_BIN_ID}/latest"
-        res = requests.get(url, headers=headers, timeout=5)
-        if res.status_code == 200:
-            print("🌐 Veriler JSONBin bulut veritabanından yüklendi!")
-            return res.json().get("record", {})
-    except Exception as e:
-        print(f"JSONBin okuma hatası: {e}")
-    return None
-
-async def save_to_jsonbin_async(data):
-    if not JSONBIN_API_KEY or not JSONBIN_BIN_ID:
-        return
-    try:
-        headers = {
-            "X-Master-Key": JSONBIN_API_KEY,
-            "Content-Type": "application/json"
-        }
-        url = f"https://api.jsonbin.io/v3/b/{JSONBIN_BIN_ID}"
-        async with aiohttp.ClientSession() as session:
-            async with session.put(url, json=data, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
-                if resp.status == 200:
-                    print("☁️ Veriler JSONBin bulut veritabanına kaydedildi!")
-                else:
-                    print(f"JSONBin kaydetme hatası: HTTP {resp.status}")
-    except Exception as e:
-        print(f"JSONBin kaydetme hatası: {e}")
-
-# Bulut kaydını debounce'luyoruz: oyun kanallarında her mesajda tetiklenen
-# save_data(), JSONBin'e (Cloudflare arkasında) art arda istek atıp rate limit'e
-# takılmasın ve event loop'u senkron requests çağrısıyla bloklamasın diye.
-_JSONBIN_MIN_PUSH_INTERVAL = 5  # saniye
-_jsonbin_last_push = 0.0
-_jsonbin_pending_data = None
-_jsonbin_push_task_running = False
-
-async def _jsonbin_push_worker():
-    global _jsonbin_last_push, _jsonbin_pending_data, _jsonbin_push_task_running
-    try:
-        while _jsonbin_pending_data is not None:
-            wait = _JSONBIN_MIN_PUSH_INTERVAL - (time.monotonic() - _jsonbin_last_push)
-            if wait > 0:
-                await asyncio.sleep(wait)
-            data_to_push = _jsonbin_pending_data
-            _jsonbin_pending_data = None
-            await save_to_jsonbin_async(data_to_push)
-            _jsonbin_last_push = time.monotonic()
-    finally:
-        _jsonbin_push_task_running = False
-
-def save_to_jsonbin(data):
-    global _jsonbin_pending_data, _jsonbin_push_task_running
-    if not JSONBIN_API_KEY or not JSONBIN_BIN_ID:
-        return
-    _jsonbin_pending_data = data
-    if not _jsonbin_push_task_running:
-        _jsonbin_push_task_running = True
-        asyncio.create_task(_jsonbin_push_worker())
+def _get_db():
+    conn = sqlite3.connect(DB_FILE)
+    conn.execute("CREATE TABLE IF NOT EXISTS bot_data (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    return conn
 
 def load_data():
-    # Önce JSONBin dene, yoksa yerel dosyadan oku
-    cloud_data = load_from_jsonbin()
-    if cloud_data:
-        for k, v in DEFAULT_DATA.items():
-            if k not in cloud_data or cloud_data[k] is None:
-                cloud_data[k] = v
-        return cloud_data
+    conn = _get_db()
+    try:
+        rows = conn.execute("SELECT key, value FROM bot_data").fetchall()
+        data = {k: json.loads(v) for k, v in rows}
 
-    if os.path.exists(DATA_FILE):
-        try:
-            with open(DATA_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                for k, v in DEFAULT_DATA.items():
-                    if k not in data or data[k] is None:
-                        data[k] = v
-                return data
-        except Exception as e:
-            print(f"Veri yükleme hatası: {e}")
-            return dict(DEFAULT_DATA)
-    return dict(DEFAULT_DATA)
+        # Eski bot_data.json (JSONBin öncesi yerel yedek) varsa bir kereliğine içe aktar.
+        if not data and os.path.exists(LEGACY_DATA_FILE):
+            try:
+                with open(LEGACY_DATA_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                with conn:
+                    conn.executemany(
+                        "INSERT INTO bot_data (key, value) VALUES (?, ?)",
+                        [(k, json.dumps(v, ensure_ascii=False)) for k, v in data.items()]
+                    )
+                print("📦 Eski bot_data.json SQLite'a aktarıldı.")
+            except Exception as e:
+                print(f"bot_data.json içe aktarma hatası: {e}")
+    finally:
+        conn.close()
+
+    for k, v in DEFAULT_DATA.items():
+        if k not in data or data[k] is None:
+            data[k] = v
+    return data
 
 def save_data(data):
-    # Yerel dosyaya yaz
+    conn = _get_db()
     try:
-        with open(DATA_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=4)
+        with conn:
+            conn.executemany(
+                "INSERT INTO bot_data (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                [(k, json.dumps(v, ensure_ascii=False)) for k, v in data.items()]
+            )
     except Exception as e:
         print(f"Veri kaydetme hatası: {e}")
-
-    # JSONBin varsa buluta da gönder
-    save_to_jsonbin(data)
+    finally:
+        conn.close()
 
 bot_data = load_data()
 
