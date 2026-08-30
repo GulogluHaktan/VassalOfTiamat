@@ -40,8 +40,21 @@ Botun **HER BİR ÖZELLİĞİ** kodlarla oynamanıza gerek kalmadan, doğrudan D
 
 ---
 
-## ☁️ 7/24 Ücretsiz Yayınlama (Discloud)
-1. Proje klasöründeki dosyaları (`bot.py`, `config.py`, `requirements.txt`, `.env`, `discloud.config`) zipleyin.
-2. `.env` içine `DISCORD_TOKEN` değerini yazın. Veriler artık bulutta değil, uygulamanın kendi diskinde `bot_data.db` (SQLite) dosyasında saklanıyor.
-3. [discloud.app](https://discloud.app/) paneline yükleyin.
-4. Botunuz 7/24 kesintisiz çalışacaktır!
+## ☁️ 7/24 Ücretsiz Yayınlama
+
+Bot, RAM tüketimini düşürmek için optimize edildi (mesaj/üye cache kapalı, minimal
+intent'ler) ve **~256 MB** veren herhangi bir ücretsiz panelde rahat çalışır.
+Discloud'un ücretsiz 100 MB sınırı Python + discord.py için yetersizdir.
+
+### Panel tabanlı hosting (bot-hosting.net vb. — önerilen)
+1. **GitHub** ile bağla (veya proje klasörünü zipleyip **Upload ZIP**).
+2. Başlangıç komutu: `python bot.py` — Python 3.10+ seç.
+3. Bağımlılıklar `requirements.txt`'ten otomatik kurulur (kurulmazsa
+   `pip install -r requirements.txt`).
+4. **Ortam değişkeni** olarak `DISCORD_TOKEN` gir. (`.env` git'e dahil değildir;
+   GitHub'dan deploy ederken panelden set etmen şart.)
+5. Veriler kalıcı diskte `bot_data.db` (SQLite) içinde tutulur; disk silinmedikçe kalır.
+
+### Discloud / Square Cloud
+`discloud.config` / `squarecloud.config` hazır. Aynı adımlar; token'ı `.env` veya panelden
+ver. Discloud free (100 MB) muhtemelen OOM olur — ücretli mikro plan veya başka host gerekir.

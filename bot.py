@@ -27,7 +27,14 @@ DEFAULT_DATA = {
     "auto_user_role": "~ Oathbound",
     "auto_bot_role": "~ Minions",
     "custom_responses": {},
-    
+
+    # Kanallara gönderilmiş rol menüleri. Her kayıt:
+    #   {"channel_id": int, "message_id": int, "kind": "dynamic|interest|color|music",
+    #    "roles_data": [...]}  (roles_data yalnızca "dynamic" için dolu)
+    # Bot restart olduğunda setup_hook bu listeyi gezip her mesajın view'ını
+    # message_id ile yeniden bağlar -> butonlar restarttan sonra da çalışır.
+    "role_menus": [],
+
     # KELİME TÜRETMECE OYUNU
     "word_game_channel_id": config.DEFAULT_WORD_GAME_CHANNEL_ID,
     "word_game_last_word": None,
@@ -104,17 +111,48 @@ def save_data(data):
 
 bot_data = load_data()
 
-intents = discord.Intents.default()
-intents.members = True
-intents.message_content = True
+# Sadece gerçekten kullanılan intent'ler açık (RAM ve gateway trafiği için).
+intents = discord.Intents.none()
+intents.guilds = True           # kanal / rol cache'i
+intents.members = True          # otorol + karşılama / uğurlama olayları
+intents.guild_messages = True   # on_message
+intents.message_content = True  # mesaj içeriği (oyunlar, oto cevap)
 
 class VassalBot(commands.Bot):
     def __init__(self):
-        super().__init__(command_prefix="!", intents=intents)
+        super().__init__(
+            command_prefix="!",
+            intents=intents,
+            help_command=None,
+            # --- RAM kısıtlaması (ücretsiz hosting ~200 MB) ---
+            max_messages=None,               # mesaj cache'ini tamamen kapat (varsayılan 1000)
+            chunk_guilds_at_startup=False,   # açılışta tüm üye listesini çekme
+            member_cache_flags=discord.MemberCacheFlags.none(),  # üyeleri cache'leme
+        )
 
     async def setup_hook(self):
+        # TDK sözlük sorguları için tek bir paylaşılan HTTP oturumu.
+        # (Eskiden her kelime için yeni ClientSession açılıyordu -> bağlantı/soket birikimi.)
+        self.session = aiohttp.ClientSession()
+
+        # KALICI VIEW KAYDI: bot yeniden başladığında daha önce kanallara gönderilmiş
+        # rol menülerinin butonları/selectleri custom_id üzerinden tekrar bağlanır.
+        # Bu yapılmazsa her restarttan sonra eski menüler "etkileşim başarısız" verir.
+        self.add_view(DynamicRoleMenuView())
+        self.add_view(build_interest_role_view())
+        self.add_view(build_color_role_view())
+        self.add_view(build_music_role_view())
+
+        # DB'de kayıtlı menüleri mesaj bazında da bağla (kesin çözüm).
+        await restore_role_menus()
+
         await self.tree.sync()
         print("Slash komutları senkronize edildi.")
+
+    async def close(self):
+        if getattr(self, "session", None):
+            await self.session.close()
+        await super().close()
 
 bot = VassalBot()
 
@@ -151,15 +189,17 @@ def is_count_game_channel(channel: discord.TextChannel) -> bool:
 async def is_valid_tdk_word(word: str) -> bool:
     word_clean = word.strip().lower()
     url = f"https://sozluk.gov.tr/gts?ara={word_clean}"
+    session = getattr(bot, "session", None)
+    if session is None or session.closed:
+        session = aiohttp.ClientSession()
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=3)) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    if isinstance(data, list) and len(data) > 0 and "error" not in data[0]:
-                        return True
-                    elif isinstance(data, dict) and "error" not in data:
-                        return True
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=3)) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                if isinstance(data, list) and len(data) > 0 and "error" not in data[0]:
+                    return True
+                elif isinstance(data, dict) and "error" not in data:
+                    return True
     except Exception as e:
         print(f"TDK API Bağlantı Hatası: {e}")
         return len(word_clean) >= 2 and word_clean.isalpha()
@@ -175,7 +215,11 @@ def get_role_by_identifier(guild: discord.Guild, identifier: str | int):
 # --- DİNAMİK ROL SEÇİMİ ---
 
 class DynamicRoleSelect(discord.ui.Select):
-    def __init__(self, roles_data: list):
+    # custom_id SABİT: setup_hook içinde tek bir kalıcı DynamicRoleMenuView kaydı,
+    # daha önce gönderilmiş TÜM özel rol menülerinin callback'ini restarttan sonra
+    # yeniden bağlar. (Eskiden custom_id rastgeleydi -> restart sonrası menüler ölüyordu.)
+    def __init__(self, roles_data: list | None = None):
+        roles_data = roles_data or []
         options = []
         for r in roles_data:
             options.append(discord.SelectOption(
@@ -190,8 +234,8 @@ class DynamicRoleSelect(discord.ui.Select):
             options=options,
             placeholder="Rollerinizi seçin...",
             min_values=1,
-            max_values=min(len(options), 25),
-            custom_id=f"dyn_select_{random.randint(10000, 99999)}"
+            max_values=min(len(options), 25) if roles_data else 25,
+            custom_id="vassal:dynamic_role_select"
         )
 
     async def callback(self, interaction: discord.Interaction):
@@ -206,6 +250,8 @@ class DynamicRoleSelect(discord.ui.Select):
             not_found = []
 
             for val in self.values:
+                if val == "none":
+                    continue
                 role = get_role_by_identifier(guild, val)
                 if role:
                     if role in user.roles:
@@ -232,7 +278,7 @@ class DynamicRoleSelect(discord.ui.Select):
             await interaction.response.send_message(f"⚠️ Rol verirken hata oluştu: {e}", ephemeral=True)
 
 class DynamicRoleMenuView(discord.ui.View):
-    def __init__(self, roles_data: list):
+    def __init__(self, roles_data: list | None = None):
         super().__init__(timeout=None)
         self.add_item(DynamicRoleSelect(roles_data))
 
@@ -282,6 +328,100 @@ class FixedRoleSelect(discord.ui.Select):
             await interaction.response.send_message("\n".join(msg), ephemeral=True)
         except Exception as e:
             await interaction.response.send_message(f"⚠️ Rol verirken hata oluştu: {e}", ephemeral=True)
+
+# --- SABİT ROL MENÜLERİ (restart sonrası setup_hook içinde yeniden kaydedilir) ---
+# custom_id'ler sabit olduğu için hem /rol_menusu komutu hem de setup_hook aynı
+# view'ları üretir; böylece kanaldaki eski menüler restarttan sonra da çalışır.
+
+def build_interest_role_view() -> discord.ui.View:
+    options = [
+        discord.SelectOption(label="~kitap", emoji="📖", description="Kitap rolü"),
+        discord.SelectOption(label="~müzik", emoji="🎵", description="Müzik rolü"),
+        discord.SelectOption(label="~resim", emoji="🎨", description="Resim rolü"),
+        discord.SelectOption(label="~oyun", emoji="🎮", description="Oyun rolü"),
+    ]
+    view = discord.ui.View(timeout=None)
+    view.add_item(FixedRoleSelect(options=options, placeholder="İlgi alanlarınızı seçin...", custom_id="interest_exact", max_values=4))
+    return view
+
+def build_color_role_view() -> discord.ui.View:
+    options = [
+        discord.SelectOption(label="~kirmizi", emoji="🌹"),
+        discord.SelectOption(label="~turuncu", emoji="🍊"),
+        discord.SelectOption(label="~sari", emoji="🍋"),
+        discord.SelectOption(label="~yesil", emoji="🌲"),
+        discord.SelectOption(label="~mavi", emoji="🧿"),
+        discord.SelectOption(label="~mor", emoji="🌌"),
+        discord.SelectOption(label="~Pembik", emoji="🌷"),
+    ]
+    view = discord.ui.View(timeout=None)
+    view.add_item(FixedRoleSelect(options=options, placeholder="Renk rolünüzü seçin...", custom_id="color_exact", max_values=1))
+    return view
+
+def build_music_role_view() -> discord.ui.View:
+    options = [
+        discord.SelectOption(label="~Bards of the Shire", emoji="🌾", description="Folk / Celtic"),
+        discord.SelectOption(label="~Maestro of Dreams", emoji="🎻", description="Symphonic Metal"),
+        discord.SelectOption(label="~Ravens of Caradhras", emoji="🐦", description="Gothic Metal"),
+        discord.SelectOption(label="~Gloom Weaver", emoji="🕷️", description="Doom Metal"),
+        discord.SelectOption(label="~Dragonborn", emoji="🐉", description="Power Metal"),
+        discord.SelectOption(label="~Necroharcmonic", emoji="💀", description="Black Metal"),
+        discord.SelectOption(label="~Mages of Earthsea", emoji="🔮", description="Progressive Rock/Metal"),
+        discord.SelectOption(label="~Demon of Crossroad", emoji="😈", description="Blues"),
+        discord.SelectOption(label="~Whisperes of the Void", emoji="🌌", description="Void / Deep Ambient"),
+        discord.SelectOption(label="~Nameless Ones", emoji="🎭", description="Nu-metal"),
+        discord.SelectOption(label="~ Sons of the Anarchy", emoji="💥", description="Punk"),
+        discord.SelectOption(label="~ KillJoys", emoji="🖤", description="Emo"),
+        discord.SelectOption(label="~ Dirt in the Wind", emoji="🌪️", description="Grunge"),
+        discord.SelectOption(label="~ Echos of Mordor", emoji="⛓️", description="Atmospheric Metal"),
+    ]
+    view = discord.ui.View(timeout=None)
+    view.add_item(FixedRoleSelect(options=options, placeholder="Müzik zevkinizi seçin...", custom_id="music_exact", max_values=14))
+    return view
+
+_ROLE_MENU_BUILDERS = {
+    "interest": build_interest_role_view,
+    "color": build_color_role_view,
+    "music": build_music_role_view,
+}
+
+def _build_role_menu_view(kind: str, roles_data: list | None = None) -> discord.ui.View | None:
+    if kind == "dynamic":
+        return DynamicRoleMenuView(roles_data or [])
+    builder = _ROLE_MENU_BUILDERS.get(kind)
+    return builder() if builder else None
+
+def remember_role_menu(message: discord.Message, kind: str, roles_data: list | None = None):
+    """Gönderilen bir rol menüsünü DB'ye kaydeder ki restart sonrası geri yüklenebilsin."""
+    menus = bot_data.setdefault("role_menus", [])
+    menus[:] = [m for m in menus if m.get("message_id") != message.id]
+    menus.append({
+        "channel_id": message.channel.id,
+        "message_id": message.id,
+        "kind": kind,
+        "roles_data": roles_data or [],
+    })
+    # Aşırı büyümeyi engelle (en yeni 100 menü yeter).
+    if len(menus) > 100:
+        del menus[:-100]
+    save_data(bot_data)
+
+async def restore_role_menus():
+    """setup_hook: kayıtlı rol menülerinin view'larını message_id ile yeniden bağlar."""
+    restored = 0
+    stale = []
+    for rec in list(bot_data.get("role_menus", [])):
+        message_id = rec.get("message_id")
+        view = _build_role_menu_view(rec.get("kind"), rec.get("roles_data"))
+        if not message_id or view is None:
+            stale.append(rec)
+            continue
+        bot.add_view(view, message_id=message_id)
+        restored += 1
+    if stale:
+        bot_data["role_menus"] = [m for m in bot_data.get("role_menus", []) if m not in stale]
+        save_data(bot_data)
+    print(f"🔗 {restored} rol menüsü yeniden bağlandı.")
 
 # --- BOT EVENTS ---
 
@@ -395,6 +535,10 @@ async def on_message(message: discord.Message):
             scores[user_id_str] = scores.get(user_id_str, 0) + total_points
 
             used_words.append(word)
+            # Tur "ğ" gelene kadar sürebilir; listeyi sınırla ki DB satırı ve
+            # RAM'deki dict şişmesin.
+            if len(used_words) > 500:
+                used_words = used_words[-500:]
 
             if ends_with_g:
                 await message.add_reaction("🏆")
@@ -551,8 +695,8 @@ async def show_count_game_stats(interaction: discord.Interaction):
         medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
 
         for i, (user_id, count) in enumerate(sorted_users):
-            member = interaction.guild.get_member(int(user_id))
-            name = member.mention if member else f"Kullanıcı ({user_id})"
+            # <@id> biçimi üye cache'i olmadan da mention olarak render edilir.
+            name = f"<@{user_id}>"
             medal = medals[i] if i < len(medals) else "🏅"
             top_text.append(f"{medal} {name} ➔ **{count} Sayı Saydı**")
 
@@ -623,8 +767,8 @@ async def show_word_game_leaderboard(interaction: discord.Interaction):
         medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
 
         for i, (user_id, score) in enumerate(sorted_scores):
-            member = interaction.guild.get_member(int(user_id))
-            name = member.mention if member else f"Kullanıcı ({user_id})"
+            # <@id> biçimi üye cache'i olmadan da mention olarak render edilir.
+            name = f"<@{user_id}>"
             medal = medals[i] if i < len(medals) else "🏅"
             leaderboard_text.append(f"{medal} {name} ➔ **{score} Puan**")
 
@@ -845,7 +989,8 @@ async def create_custom_role_menu(interaction: discord.Interaction, baslik: str,
             color=discord.Color.purple()
         )
 
-        await interaction.channel.send(embed=embed, view=view)
+        sent = await interaction.channel.send(embed=embed, view=view)
+        remember_role_menu(sent, "dynamic", roles_data)
         await interaction.followup.send("✅ Özel rol menüsü kanala gönderildi!", ephemeral=True)
     except Exception as e:
         await interaction.followup.send(f"⚠️ Hata: {e}", ephemeral=True)
@@ -876,36 +1021,20 @@ async def send_role_menus(interaction: discord.Interaction, tur: app_commands.Ch
         selected_type = tur.value.lower()
         
         if selected_type in ["ilgi", "ilgi alanları", "kitap"]:
-            options = [
-                discord.SelectOption(label="~kitap", emoji="📖", description="Kitap rolü"),
-                discord.SelectOption(label="~müzik", emoji="🎵", description="Müzik rolü"),
-                discord.SelectOption(label="~resim", emoji="🎨", description="Resim rolü"),
-                discord.SelectOption(label="~oyun", emoji="🎮", description="Oyun rolü"),
-            ]
-            view = discord.ui.View(timeout=None)
-            view.add_item(FixedRoleSelect(options=options, placeholder="İlgi alanlarınızı seçin...", custom_id="interest_exact", max_values=4))
-            
+            view = build_interest_role_view()
+
             embed = discord.Embed(
                 title="📖 İlgi Alanları Rol Seçimi",
                 description="Aşağıdaki menüden ilgilendiğiniz kategorileri seçerek rol alabilirsiniz:\n\n"
                             "📖 **~kitap** | 🎵 **~müzik** | 🎨 **~resim** | 🎮 **~oyun**",
                 color=discord.Color.blue()
             )
-            await interaction.channel.send(embed=embed, view=view)
+            sent = await interaction.channel.send(embed=embed, view=view)
+            remember_role_menu(sent, "interest")
             await interaction.followup.send("✅ İlgi alanı rol menüsü gönderildi!", ephemeral=True)
 
         elif selected_type in ["renk", "renkler"]:
-            options = [
-                discord.SelectOption(label="~kirmizi", emoji="🌹"),
-                discord.SelectOption(label="~turuncu", emoji="🍊"),
-                discord.SelectOption(label="~sari", emoji="🍋"),
-                discord.SelectOption(label="~yesil", emoji="🌲"),
-                discord.SelectOption(label="~mavi", emoji="🧿"),
-                discord.SelectOption(label="~mor", emoji="🌌"),
-                discord.SelectOption(label="~Pembik", emoji="🌷"),
-            ]
-            view = discord.ui.View(timeout=None)
-            view.add_item(FixedRoleSelect(options=options, placeholder="Renk rolünüzü seçin...", custom_id="color_exact", max_values=1))
+            view = build_color_role_view()
 
             embed = discord.Embed(
                 title="🎨 Renk Rol Seçimi",
@@ -913,28 +1042,12 @@ async def send_role_menus(interaction: discord.Interaction, tur: app_commands.Ch
                             "🌹 **~kirmizi** | 🍊 **~turuncu** | 🍋 **~sari** | 🌲 **~yesil** | 🌌 **~mor** | 🌷 **~Pembik**",
                 color=discord.Color.purple()
             )
-            await interaction.channel.send(embed=embed, view=view)
+            sent = await interaction.channel.send(embed=embed, view=view)
+            remember_role_menu(sent, "color")
             await interaction.followup.send("✅ Renk rol menüsü gönderildi!", ephemeral=True)
 
         elif selected_type in ["muzik", "müzik"]:
-            options = [
-                discord.SelectOption(label="~Bards of the Shire", emoji="🌾", description="Folk / Celtic"),
-                discord.SelectOption(label="~Maestro of Dreams", emoji="🎻", description="Symphonic Metal"),
-                discord.SelectOption(label="~Ravens of Caradhras", emoji="🐦", description="Gothic Metal"),
-                discord.SelectOption(label="~Gloom Weaver", emoji="🕷️", description="Doom Metal"),
-                discord.SelectOption(label="~Dragonborn", emoji="🐉", description="Power Metal"),
-                discord.SelectOption(label="~Necroharcmonic", emoji="💀", description="Black Metal"),
-                discord.SelectOption(label="~Mages of Earthsea", emoji="🔮", description="Progressive Rock/Metal"),
-                discord.SelectOption(label="~Demon of Crossroad", emoji="😈", description="Blues"),
-                discord.SelectOption(label="~Whisperes of the Void", emoji="🌌", description="Void / Deep Ambient"),
-                discord.SelectOption(label="~Nameless Ones", emoji="🎭", description="Nu-metal"),
-                discord.SelectOption(label="~ Sons of the Anarchy", emoji="💥", description="Punk"),
-                discord.SelectOption(label="~ KillJoys", emoji="🖤", description="Emo"),
-                discord.SelectOption(label="~ Dirt in the Wind", emoji="🌪️", description="Grunge"),
-                discord.SelectOption(label="~ Echos of Mordor", emoji="⛓️", description="Atmospheric Metal"),
-            ]
-            view = discord.ui.View(timeout=None)
-            view.add_item(FixedRoleSelect(options=options, placeholder="Müzik zevkinizi seçin...", custom_id="music_exact", max_values=14))
+            view = build_music_role_view()
 
             embed = discord.Embed(
                 title="🎵 Müzik Türü Rol Seçimi",
@@ -955,7 +1068,8 @@ async def send_role_menus(interaction: discord.Interaction, tur: app_commands.Ch
                             "🌌 **~Whisperes of the Void** ➔ Void / Deep Ambient",
                 color=discord.Color.dark_red()
             )
-            await interaction.channel.send(embed=embed, view=view)
+            sent = await interaction.channel.send(embed=embed, view=view)
+            remember_role_menu(sent, "music")
             await interaction.followup.send("✅ Müzik rol menüsü gönderildi!", ephemeral=True)
         else:
             await interaction.followup.send("Geçersiz tür. Kullanılabilir türler: `ilgi`, `renk`, `muzik`", ephemeral=True)
