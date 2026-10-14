@@ -20,6 +20,21 @@ Karşılama/uğurlama mesajları, oto-cevap ve GIF yönetimi, rol menüleri, kel
 
 `bot.py` (kalıcılık, olaylar, slash komutları, rol menüleri) + `config.py` (varsayılanlar) → `bot_data.db`. Düşük RAM için mesaj/üye cache'i kapalıdır. Komut listesi: [docs/README_ayrintili.md](docs/README_ayrintili.md).
 
+### Akış şeması (nasıl çalışır)
+
+```mermaid
+flowchart TD
+  MSG["Discord mesajı"] --> G1{"Kelime oyunu kanalı?"}
+  G1 -- evet --> W["TDK doğrulama + skor"]
+  G1 -- hayır --> G2{"Sayı oyunu kanalı?"}
+  G2 -- evet --> N["Sıralı sayı kontrolü"]
+  G2 -- hayır --> R["Oto-cevap eşleşmesi"]
+  CMD["Admin slash komutu"] --> DB[("bot_data.db")]
+  DB --> R
+```
+
+Mesajlar sabit öncelik zincirinden geçer: önce oyunlar, sonra oto-cevap. Slash komutlarıyla yapılan ayarlar SQLite'a yazılır ve yeniden başlatmada korunur.
+
 ## Seçilmiş sonuçlar
 
 Yazılım projesidir; ölçülmüş deney sonucu yoktur. Çıktı: çalışan komut seti ve rol menüleri.
